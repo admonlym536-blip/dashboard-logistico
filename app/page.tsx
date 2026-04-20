@@ -16,6 +16,9 @@ export default function Home() {
 
   const [data, setData] = useState<any[]>([])
   const [usuarios, setUsuarios] = useState<any[]>([])
+  const [detalle, setDetalle] = useState<any[]>([])
+  const [recepcionActiva, setRecepcionActiva] = useState<any>(null)
+
   const [fecha, setFecha] = useState('')
   const [planillaFiltro, setPlanillaFiltro] = useState('')
   const [usuarioFiltro, setUsuarioFiltro] = useState('')
@@ -68,12 +71,27 @@ export default function Home() {
     setUsuarios(data || [])
   }
 
+  const verDetalle = async (id:any) => {
+    const { data } = await supabase
+      .from('recepcion_detalle')
+      .select('*')
+      .eq('recepcion_id', id)
+
+    setDetalle(data || [])
+    setRecepcionActiva(id)
+  }
+
   const formatoCOP = (valor: number) => {
     return new Intl.NumberFormat('es-CO', {
       style: 'currency',
       currency: 'COP',
       maximumFractionDigits: 0
     }).format(valor || 0)
+  }
+
+  const formatoMillones = (valor: number) => {
+    if (!valor) return '0'
+    return (valor / 1000000).toFixed(1) + 'M'
   }
 
   const logout = async () => {
@@ -90,14 +108,32 @@ export default function Home() {
   })
 
   const totalGeneral = dataFiltrada.reduce((a, r) => a + (r.total || 0), 0)
-  const totalCambios = dataFiltrada.reduce((a, r) => a + (r.total_cambios || 0), 0)
-  const totalAverias = dataFiltrada.reduce((a, r) => a + (r.total_averias || 0), 0)
+
+  const totalDevolucionBuena = dataFiltrada.reduce(
+    (a, r) => a + (r.total_devolucion_buena || 0), 0
+  )
+
+  const totalAverias = dataFiltrada.reduce(
+    (a, r) => a + (r.total_averias || 0), 0
+  )
 
   const porDia = Object.values(
     dataFiltrada.reduce((acc: any, r) => {
       const dia = r.created_at?.substring(0, 10)
-      if (!acc[dia]) acc[dia] = { dia, total: 0 }
+
+      if (!acc[dia]) {
+        acc[dia] = {
+          dia,
+          total: 0,
+          devolucion_buena: 0,
+          averias: 0
+        }
+      }
+
       acc[dia].total += r.total || 0
+      acc[dia].devolucion_buena += r.total_devolucion_buena || 0
+      acc[dia].averias += r.total_averias || 0
+
       return acc
     }, {})
   )
@@ -106,10 +142,10 @@ export default function Home() {
     dataFiltrada.reduce((acc: any, r) => {
 
       if (!acc[r.placa]) {
-        acc[r.placa] = { placa: r.placa, cambios: 0, averias: 0 }
+        acc[r.placa] = { placa: r.placa, devolucion_buena: 0, averias: 0 }
       }
 
-      acc[r.placa].cambios += r.total_cambios || 0
+      acc[r.placa].devolucion_buena += r.total_devolucion_buena || 0
       acc[r.placa].averias += r.total_averias || 0
 
       return acc
@@ -118,11 +154,10 @@ export default function Home() {
   ).slice(0, 10)
 
   const pieData = [
-    { name: 'Cambios', value: totalCambios },
+    { name: 'Devolución buena', value: totalDevolucionBuena },
     { name: 'Averías', value: totalAverias }
   ]
 
-  // 🔥 EXCEL
   const exportarExcel = async () => {
 
     const { data: detalle } = await supabase
@@ -160,7 +195,7 @@ export default function Home() {
             Producto: d.Producto,
             Cantidad_Total: 0,
             Valor_Total: 0,
-            Valor_Cambios: 0,
+            Valor_Devolucion_Buena: 0,
             Valor_Averias: 0
           }
         }
@@ -168,8 +203,11 @@ export default function Home() {
         acc[d.Producto].Cantidad_Total += d.Cantidad
         acc[d.Producto].Valor_Total += d.Valor_Total
 
-        if (d.Tipo === 'cambio') acc[d.Producto].Valor_Cambios += d.Valor_Total
-        if (d.Tipo === 'averia') acc[d.Producto].Valor_Averias += d.Valor_Total
+        if (d.Tipo === 'devolucion buena')
+          acc[d.Producto].Valor_Devolucion_Buena += d.Valor_Total
+
+        if (d.Tipo === 'averia')
+          acc[d.Producto].Valor_Averias += d.Valor_Total
 
         return acc
 
@@ -188,6 +226,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-100">
 
+      {/* HEADER */}
       <div className="bg-white shadow-md px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-700">
           📊 Informe Logístico
@@ -199,13 +238,14 @@ export default function Home() {
 
           <select value={usuarioFiltro} onChange={(e)=>setUsuarioFiltro(e.target.value)} className="input">
             <option value="">Usuarios</option>
-            {usuarios.map(u => <option key={u.id}>{u.nombre}</option>)}
+            {usuarios.map(u => (
+              <option key={u.id} value={u.correo}>
+                {u.nombre}
+              </option>
+            ))}
           </select>
 
-          <button 
-            onClick={exportarExcel} 
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
-          >
+          <button onClick={exportarExcel} className="bg-green-600 text-white px-4 py-2 rounded">
             Excel
           </button>
 
@@ -213,78 +253,108 @@ export default function Home() {
         </div>
       </div>
 
+      {/* KPIs */}
       <div className="grid grid-cols-4 gap-4 p-6">
         <Card title="💰 Total" value={formatoCOP(totalGeneral)} />
-        <Card title="🔄 Cambios" value={formatoCOP(totalCambios)} color="text-green-600"/>
+        <Card title="🔄 Devolución buena" value={formatoCOP(totalDevolucionBuena)} color="text-green-600"/>
         <Card title="⚠️ Averías" value={formatoCOP(totalAverias)} color="text-red-600"/>
         <Card title="📦 Recepciones" value={dataFiltrada.length} />
       </div>
 
+      {/* GRÁFICAS */}
       <div className="grid grid-cols-2 gap-6 px-6">
 
         <ChartCard title="📈 Ingresos por día">
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={porDia}>
               <XAxis dataKey="dia"/>
-              <YAxis/>
+              <YAxis tickFormatter={formatoMillones}/>
               <Tooltip formatter={(v:any)=>formatoCOP(v)} />
               <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={3}/>
+              <Line type="monotone" dataKey="devolucion_buena" stroke="#22c55e" strokeWidth={2}/>
+              <Line type="monotone" dataKey="averias" stroke="#ef4444" strokeWidth={2}/>
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
 
+        {/* PIE CORREGIDO */}
         <ChartCard title="🥧 Distribución">
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
               <Pie
                 data={pieData}
                 dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
                 innerRadius={60}
-               label={({ percent = 0 }) => percent > 0 ? `${(percent * 100).toFixed(0)}%` : ''
-        }
+                outerRadius={90}
+                label
               >
-                <Cell fill="#22c55e"/>
-                <Cell fill="#ef4444"/>
+                {pieData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={index === 0 ? "#22c55e" : "#ef4444"}
+                  />
+                ))}
               </Pie>
+              <Tooltip formatter={(v:any)=>formatoCOP(v)} />
             </PieChart>
           </ResponsiveContainer>
         </ChartCard>
 
       </div>
 
-      <div className="px-6 mt-6">
-        <ChartCard title="🚚 Top vehículos">
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={porPlaca}>
-              <XAxis dataKey="placa"/>
-              <YAxis/>
-              <Tooltip formatter={(v:any)=>formatoCOP(v)} />
-              <Bar dataKey="cambios" fill="#22c55e"/>
-              <Bar dataKey="averias" fill="#ef4444"/>
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
-
+      {/* LISTA */}
       <div className="p-6 grid gap-3">
         {dataFiltrada.map(r => (
-          <div key={r.id} className="bg-white p-4 rounded-xl shadow flex justify-between hover:shadow-lg transition">
-
+          <div 
+            key={r.id} 
+            onClick={()=>verDetalle(r.id)}
+            className="bg-white p-4 rounded-xl shadow flex justify-between hover:shadow-lg transition cursor-pointer"
+          >
             <div>
               <p className="font-bold text-lg">📄 {r.planilla}</p>
               <p className="text-sm text-gray-500">🚚 {r.placa}</p>
-              <p className="text-xs text-blue-600">👤 {r.usuario || 'Sin registro'}</p>
+              <p className="text-xs text-blue-600">👤 {r.usuario}</p>
             </div>
 
             <div className="text-right">
               <p className="font-bold">{formatoCOP(r.total)}</p>
-              <p className="text-green-600 text-sm">C: {formatoCOP(r.total_cambios)}</p>
+              <p className="text-green-600 text-sm">D: {formatoCOP(r.total_devolucion_buena)}</p>
               <p className="text-red-600 text-sm">A: {formatoCOP(r.total_averias)}</p>
             </div>
-
           </div>
         ))}
       </div>
+
+      {/* MODAL */}
+      {recepcionActiva && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-xl w-[500px] max-h-[70vh] overflow-auto">
+
+            <h2 className="font-bold mb-4">📦 Resumen de ingreso</h2>
+
+            {detalle.map((d,i)=>(
+              <div key={i} className="flex justify-between border-b py-2">
+                <span>{d.nombre}</span>
+                <span>{d.cantidad}</span>
+                <span className={d.tipo==='averia'?'text-red-600':'text-green-600'}>
+                  {d.tipo}
+                </span>
+              </div>
+            ))}
+
+            <button 
+              onClick={()=>setRecepcionActiva(null)}
+              className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+            >
+              Cerrar
+            </button>
+
+          </div>
+        </div>
+      )}
 
     </div>
   )
@@ -292,7 +362,7 @@ export default function Home() {
 
 function Card({ title, value, color='' }: any) {
   return (
-    <div className="bg-white p-5 rounded-xl shadow hover:shadow-lg transition">
+    <div className="bg-white p-5 rounded-xl shadow">
       <p className="text-gray-500 text-sm">{title}</p>
       <h2 className={`text-2xl font-bold ${color}`}>{value}</h2>
     </div>
