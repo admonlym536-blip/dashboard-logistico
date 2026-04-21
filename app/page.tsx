@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -6,8 +7,8 @@ import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell
 } from 'recharts'
 
 export default function Home() {
@@ -18,6 +19,7 @@ export default function Home() {
   const [usuarios, setUsuarios] = useState<any[]>([])
   const [detalle, setDetalle] = useState<any[]>([])
   const [recepcionActiva, setRecepcionActiva] = useState<any>(null)
+  const [faltantes, setFaltantes] = useState<any[]>([])
 
   const [fecha, setFecha] = useState('')
   const [planillaFiltro, setPlanillaFiltro] = useState('')
@@ -33,6 +35,7 @@ export default function Home() {
       } else {
         cargar()
         cargarUsuarios()
+        cargarFaltantes()
       }
     }
 
@@ -71,6 +74,16 @@ export default function Home() {
     setUsuarios(data || [])
   }
 
+  // Cargar faltantes desde la vista calculada que ya incluye el nombre del producto
+  const cargarFaltantes = async () => {
+    const { data } = await supabase
+      // Reemplaza 'faltantes_con_nombres' con el nombre de tu tabla/vista calculada
+      .from('faltantes_con_nombres')
+      .select('*')
+
+    setFaltantes(data || [])
+  }
+
   const verDetalle = async (id:any) => {
     const { data } = await supabase
       .from('recepcion_detalle')
@@ -87,6 +100,10 @@ export default function Home() {
       currency: 'COP',
       maximumFractionDigits: 0
     }).format(valor || 0)
+  }
+
+  const formatoNumero = (valor: number) => {
+    return new Intl.NumberFormat('es-CO').format(valor || 0)
   }
 
   const formatoMillones = (valor: number) => {
@@ -117,6 +134,10 @@ export default function Home() {
     (a, r) => a + (r.total_averias || 0), 0
   )
 
+  const totalFaltantes = faltantes.reduce(
+    (a, f) => a + (f.cantidad_faltante || 0), 0
+  )
+
   const porDia = Object.values(
     dataFiltrada.reduce((acc: any, r) => {
       const dia = r.created_at?.substring(0, 10)
@@ -138,20 +159,26 @@ export default function Home() {
     }, {})
   )
 
-  const porPlaca = Object.values(
-    dataFiltrada.reduce((acc: any, r) => {
+  const faltantesPorVehiculo = faltantes.reduce((acc: any, f) => {
 
-      if (!acc[r.placa]) {
-        acc[r.placa] = { placa: r.placa, devolucion_buena: 0, averias: 0 }
+    if (!acc[f.vehiculo]) {
+      acc[f.vehiculo] = {
+        total: 0,
+        productos: []
       }
+    }
 
-      acc[r.placa].devolucion_buena += r.total_devolucion_buena || 0
-      acc[r.placa].averias += r.total_averias || 0
+    acc[f.vehiculo].total += f.cantidad_faltante || 0
 
-      return acc
+    acc[f.vehiculo].productos.push({
+      // Utilizamos el nombre proveniente de la vista calculada
+      nombre: f.nombre,
+      cantidad: f.cantidad_faltante
+    })
 
-    }, {})
-  ).slice(0, 10)
+    return acc
+
+  }, {})
 
   const pieData = [
     { name: 'Devolución buena', value: totalDevolucionBuena },
@@ -162,6 +189,11 @@ export default function Home() {
 
     const { data: detalle } = await supabase
       .from('recepcion_detalle')
+      .select('*')
+
+    const { data: faltantesData } = await supabase
+      // Consultamos la misma vista de faltantes con nombres
+      .from('faltantes_con_nombres')
       .select('*')
 
     if (!detalle) return
@@ -186,6 +218,30 @@ export default function Home() {
         Fecha: r?.created_at
       }
     })
+
+
+    // Detalle de faltantes con nombre del producto para el informe
+    const faltantesDetalle = (faltantesData || []).map(f => ({
+      Producto: f.nombre,
+      Vehiculo: f.vehiculo,
+      Cantidad_Faltante: f.cantidad_faltante,
+      Fecha: f.fecha
+    }))
+
+    // Consolidado de faltantes por producto (suma de cantidades)
+    const faltantesConsolidado = Object.values(
+      (faltantesData || []).reduce((acc: any, f: any) => {
+        const key = f.nombre || f.codigo_producto
+        if (!acc[key]) {
+          acc[key] = {
+            Producto: key,
+            Cantidad_Total: 0
+          }
+        }
+        acc[key].Cantidad_Total += f.cantidad_faltante || 0
+        return acc
+      }, {})
+    )
 
     const consolidado = Object.values(
       detalleCompleto.reduce((acc: any, d: any) => {
@@ -219,6 +275,19 @@ export default function Home() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(consolidado), 'Consolidado')
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalleCompleto), 'Detalle')
 
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(faltantesDetalle),
+      'Faltantes_Detalle'
+    )
+
+    // Añadimos una hoja con el consolidado de faltantes para la nota de crédito
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(faltantesConsolidado),
+      'Faltantes_Consolidado'
+    )
+
     const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
     saveAs(new Blob([buffer]), 'reporte_logistico.xlsx')
   }
@@ -226,7 +295,6 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-100">
 
-      {/* HEADER */}
       <div className="bg-white shadow-md px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-700">
           📊 Informe Logístico
@@ -253,15 +321,14 @@ export default function Home() {
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-4 gap-4 p-6">
+      <div className="grid grid-cols-5 gap-4 p-6">
         <Card title="💰 Total" value={formatoCOP(totalGeneral)} />
         <Card title="🔄 Devolución buena" value={formatoCOP(totalDevolucionBuena)} color="text-green-600"/>
         <Card title="⚠️ Averías" value={formatoCOP(totalAverias)} color="text-red-600"/>
         <Card title="📦 Recepciones" value={dataFiltrada.length} />
+        <Card title="📉 Faltantes" value={formatoNumero(totalFaltantes)} color="text-orange-600"/>
       </div>
 
-      {/* GRÁFICAS */}
       <div className="grid grid-cols-2 gap-6 px-6">
 
         <ChartCard title="📈 Ingresos por día">
@@ -277,25 +344,21 @@ export default function Home() {
           </ResponsiveContainer>
         </ChartCard>
 
-        {/* PIE CORREGIDO */}
         <ChartCard title="🥧 Distribución">
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
-              <Pie
-                data={pieData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={90}
-                label
+              <Pie 
+                data={pieData} 
+                dataKey="value" 
+                nameKey="name" 
+                cx="50%" 
+                cy="50%" 
+                innerRadius={60} 
+                outerRadius={90} 
+                label={({ value }) => formatoCOP(value)}
               >
                 {pieData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={index === 0 ? "#22c55e" : "#ef4444"}
-                  />
+                  <Cell key={index} fill={index === 0 ? "#22c55e" : "#ef4444"} />
                 ))}
               </Pie>
               <Tooltip formatter={(v:any)=>formatoCOP(v)} />
@@ -305,52 +368,123 @@ export default function Home() {
 
       </div>
 
-      {/* LISTA */}
       <div className="p-6 grid gap-3">
-        {dataFiltrada.map(r => (
-          <div 
-            key={r.id} 
-            onClick={()=>verDetalle(r.id)}
-            className="bg-white p-4 rounded-xl shadow flex justify-between hover:shadow-lg transition cursor-pointer"
-          >
-            <div>
-              <p className="font-bold text-lg">📄 {r.planilla}</p>
-              <p className="text-sm text-gray-500">🚚 {r.placa}</p>
-              <p className="text-xs text-blue-600">👤 {r.usuario}</p>
-            </div>
+        {dataFiltrada.map(r => {
 
-            <div className="text-right">
-              <p className="font-bold">{formatoCOP(r.total)}</p>
-              <p className="text-green-600 text-sm">D: {formatoCOP(r.total_devolucion_buena)}</p>
-              <p className="text-red-600 text-sm">A: {formatoCOP(r.total_averias)}</p>
+          const faltanteCarro = faltantesPorVehiculo[r.placa]
+
+          return (
+            <div 
+              key={r.id} 
+              onClick={()=>verDetalle(r.id)}
+              className="bg-white p-4 rounded-xl shadow flex justify-between hover:shadow-lg transition cursor-pointer"
+            >
+              <div>
+                <p className="font-bold text-lg">📄 Planilla: {r.planilla}</p>
+                <p className="text-sm text-gray-500">🚚 {r.placa}</p>
+                <p className="text-xs text-blue-600">👤 {r.usuario}</p>
+
+                {faltanteCarro ? (
+                  <div className="mt-2 text-orange-600 text-sm">
+                    ⚠️ Faltantes: {formatoNumero(faltanteCarro.total)}
+                  </div>
+                ) : (
+                  <p className="text-green-600 text-sm mt-2">✔ Sin faltantes</p>
+                )}
+              </div>
+
+              <div className="text-right">
+                <p className="font-bold">{formatoCOP(r.total)}</p>
+                <p className="text-green-600 text-sm">D: {formatoCOP(r.total_devolucion_buena)}</p>
+                <p className="text-red-600 text-sm">A: {formatoCOP(r.total_averias)}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
-      {/* MODAL */}
       {recepcionActiva && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
           <div className="bg-white p-6 rounded-xl w-[500px] max-h-[70vh] overflow-auto">
 
-            <h2 className="font-bold mb-4">📦 Resumen de ingreso</h2>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-bold">📦 Resumen</h2>
+              {/* Botón de cierre en forma de X */}
+              <button
+                onClick={() => setRecepcionActiva(null)}
+                className="text-gray-500 hover:text-black text-xl"
+              >
+                ✖
+              </button>
+            </div>
 
-            {detalle.map((d,i)=>(
-              <div key={i} className="flex justify-between border-b py-2">
-                <span>{d.nombre}</span>
-                <span>{d.cantidad}</span>
-                <span className={d.tipo==='averia'?'text-red-600':'text-green-600'}>
-                  {d.tipo}
-                </span>
-              </div>
-            ))}
+            {/* DEVOLUCION BUENA */}
+            <h3 className="text-green-600 font-semibold mb-2">Devolución buena</h3>
+            <table className="w-full text-sm mb-4 border">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="text-left px-2 py-1">Producto</th>
+                  <th className="text-right px-2 py-1">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detalle
+                  .filter(d => d.tipo === 'devolucion buena')
+                  .sort((a,b)=>b.cantidad - a.cantidad)
+                  .map((d,i)=>(
+                    <tr key={i} className="border-t">
+                      <td className="px-2 py-1">{d.nombre}</td>
+                      <td className="text-right px-2 py-1">{formatoNumero(d.cantidad)}</td>
+                    </tr>
+                ))}
+              </tbody>
+            </table>
 
-            <button 
-              onClick={()=>setRecepcionActiva(null)}
-              className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
-            >
-              Cerrar
-            </button>
+            {/* AVERIAS */}
+            <h3 className="text-red-600 font-semibold mb-2">Averías</h3>
+            <table className="w-full text-sm mb-4 border">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="text-left px-2 py-1">Producto</th>
+                  <th className="text-right px-2 py-1">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detalle
+                  .filter(d => d.tipo === 'averia')
+                  .sort((a,b)=>b.cantidad - a.cantidad)
+                  .map((d,i)=>(
+                    <tr key={i} className="border-t">
+                      <td className="px-2 py-1">{d.nombre}</td>
+                      <td className="text-right px-2 py-1">{formatoNumero(d.cantidad)}</td>
+                    </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* FALTANTES */}
+            <h3 className="text-orange-600 font-semibold mb-2">Faltantes</h3>
+            <table className="w-full text-sm mb-4 border">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="text-left px-2 py-1">Código</th>
+                  <th className="text-right px-2 py-1">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {faltantes
+                  .filter(f => f.vehiculo === data.find(x => x.id === recepcionActiva)?.placa)
+                  .sort((a, b) => b.cantidad_faltante - a.cantidad_faltante)
+                  .map((f, i) => (
+                    <tr key={i} className="border-t">
+                      {/* Mostramos el nombre directamente desde la vista */}
+                      <td className="px-2 py-1">{f.nombre}</td>
+                      <td className="text-right px-2 py-1">{formatoNumero(f.cantidad_faltante)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+
 
           </div>
         </div>
