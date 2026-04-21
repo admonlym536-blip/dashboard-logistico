@@ -1,4 +1,5 @@
 
+
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -21,7 +22,11 @@ export default function Home() {
   const [recepcionActiva, setRecepcionActiva] = useState<any>(null)
   const [faltantes, setFaltantes] = useState<any[]>([])
 
-  const [fecha, setFecha] = useState('')
+  // Establecer la fecha por defecto al día actual en formato YYYY-MM-DD
+  const [fecha, setFecha] = useState(() => {
+    // Utilizamos en-CA para obtener el formato YYYY-MM-DD independientemente de la zona
+    return new Date().toLocaleDateString('en-CA')
+  })
   const [planillaFiltro, setPlanillaFiltro] = useState('')
   const [usuarioFiltro, setUsuarioFiltro] = useState('')
 
@@ -295,16 +300,39 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-100">
 
-      <div className="bg-white shadow-md px-6 py-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-700">
-          📊 Informe Logístico
-        </h1>
+      <div className="bg-white shadow-md px-6 py-4 flex justify-between items-center flex-wrap gap-4">
+        {/* Encabezado con logo y nombre de la aplicación */}
+        <div className="flex items-center gap-3">
+          <img 
+            src="/icon.png" 
+            alt="logo" 
+            className="w-10 h-10 object-contain" 
+          />
+          <h1 className="text-2xl font-bold text-gray-700">
+            Provisión 360°
+          </h1>
+        </div>
 
-        <div className="flex gap-2">
-          <input type="date" value={fecha} onChange={(e)=>setFecha(e.target.value)} className="input"/>
-          <input placeholder="Planilla" value={planillaFiltro} onChange={(e)=>setPlanillaFiltro(e.target.value)} className="input"/>
+        <div className="flex items-center gap-3 flex-wrap">
+          <input 
+            type="date" 
+            value={fecha} 
+            onChange={(e) => setFecha(e.target.value)} 
+            className="px-3 py-2 rounded-md border border-gray-300 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" 
+          />
+          <input 
+            type="text"
+            placeholder="Planilla" 
+            value={planillaFiltro} 
+            onChange={(e) => setPlanillaFiltro(e.target.value)} 
+            className="px-3 py-2 rounded-md border border-gray-300 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" 
+          />
 
-          <select value={usuarioFiltro} onChange={(e)=>setUsuarioFiltro(e.target.value)} className="input">
+          <select 
+            value={usuarioFiltro} 
+            onChange={(e) => setUsuarioFiltro(e.target.value)} 
+            className="px-3 py-2 rounded-md border border-gray-300 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
             <option value="">Usuarios</option>
             {usuarios.map(u => (
               <option key={u.id} value={u.correo}>
@@ -313,11 +341,19 @@ export default function Home() {
             ))}
           </select>
 
-          <button onClick={exportarExcel} className="bg-green-600 text-white px-4 py-2 rounded">
-            Excel
+          <button 
+            onClick={exportarExcel} 
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md shadow focus:outline-none transition-colors"
+          >
+            📄 Excel
           </button>
 
-          <button onClick={logout} className="btn-red">Salir</button>
+          <button 
+            onClick={logout} 
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md shadow focus:outline-none transition-colors"
+          >
+            Salir
+          </button>
         </div>
       </div>
 
@@ -382,7 +418,9 @@ export default function Home() {
               <div>
                 <p className="font-bold text-lg">📄 Planilla: {r.planilla}</p>
                 <p className="text-sm text-gray-500">🚚 {r.placa}</p>
-                <p className="text-xs text-blue-600">👤 {r.usuario}</p>
+                <p className="text-xs text-blue-600">
+                  👤 {usuarios.find((u: any) => u.correo === r.usuario)?.nombre || r.usuario}
+                </p>
 
                 {faltanteCarro ? (
                   <div className="mt-2 text-orange-600 text-sm">
