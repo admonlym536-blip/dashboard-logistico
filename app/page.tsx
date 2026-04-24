@@ -1,5 +1,7 @@
 
 
+
+
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -22,9 +24,14 @@ export default function Home() {
   const [recepcionActiva, setRecepcionActiva] = useState<any>(null)
   const [faltantes, setFaltantes] = useState<any[]>([])
 
-  // Establecer la fecha por defecto al día actual en formato YYYY-MM-DD
-  const [fecha, setFecha] = useState(() => {
-    // Utilizamos en-CA para obtener el formato YYYY-MM-DD independientemente de la zona
+  // Lista de ventas por planilla para el día seleccionado
+  const [ventasPlanilla, setVentasPlanilla] = useState<any[]>([])
+
+  // Establecer las fechas de inicio y fin por defecto al día actual en formato YYYY-MM-DD
+  const [fechaInicio, setFechaInicio] = useState(() => {
+    return new Date().toLocaleDateString('en-CA')
+  })
+  const [fechaFin, setFechaFin] = useState(() => {
     return new Date().toLocaleDateString('en-CA')
   })
   const [planillaFiltro, setPlanillaFiltro] = useState('')
@@ -60,6 +67,19 @@ export default function Home() {
     }
 
   }, [])
+
+  // Cargar ventas por planilla para el rango seleccionado
+  useEffect(() => {
+    const cargarVentasPlanilla = async () => {
+      const { data: ventas } = await supabase
+        .from('ventas_planilla')
+        .select('*')
+        .gte('fecha', fechaInicio)
+        .lte('fecha', fechaFin)
+      setVentasPlanilla(ventas || [])
+    }
+    cargarVentasPlanilla()
+  }, [fechaInicio, fechaFin])
 
   const cargar = async () => {
     const { data } = await supabase
@@ -122,8 +142,10 @@ export default function Home() {
   }
 
   const dataFiltrada = data.filter(r => {
+    const fechaStr = r.created_at?.substring(0, 10)
     return (
-      (!fecha || r.created_at?.startsWith(fecha)) &&
+      (!fechaInicio || (fechaStr && fechaStr >= fechaInicio)) &&
+      (!fechaFin || (fechaStr && fechaStr <= fechaFin)) &&
       (!planillaFiltro || r.planilla?.toString().includes(planillaFiltro)) &&
       (!usuarioFiltro || r.usuario === usuarioFiltro)
     )
@@ -138,6 +160,22 @@ export default function Home() {
   const totalAverias = dataFiltrada.reduce(
     (a, r) => a + (r.total_averias || 0), 0
   )
+
+  // Suma total de devoluciones (buena + averías)
+  const totalDevoluciones = totalDevolucionBuena + totalAverias
+
+
+  // Cálculo del porcentaje de devolución basado en las ventas planilla
+  const totalVentasPlanilla = ventasPlanilla.reduce(
+    (acc: number, v: any) => acc + (v.valor_venta || 0),
+    0
+  )
+  const porcentajeDevolucionPlanilla = totalVentasPlanilla > 0
+    ? (totalDevolucionBuena / totalVentasPlanilla) * 100
+    : 0
+
+  // Color del porcentaje según meta (5%): rojo si se supera la meta, verde si se cumple
+  const porcentajeColor = porcentajeDevolucionPlanilla > 5 ? 'text-red-600' : 'text-green-600'
 
   const totalFaltantes = faltantes.reduce(
     (a, f) => a + (f.cantidad_faltante || 0), 0
@@ -314,10 +352,18 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Rango de fechas */}
           <input 
             type="date" 
-            value={fecha} 
-            onChange={(e) => setFecha(e.target.value)} 
+            value={fechaInicio} 
+            onChange={(e) => setFechaInicio(e.target.value)} 
+            className="px-3 py-2 rounded-md border border-gray-300 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" 
+          />
+          <span>-</span>
+          <input 
+            type="date" 
+            value={fechaFin} 
+            onChange={(e) => setFechaFin(e.target.value)} 
             className="px-3 py-2 rounded-md border border-gray-300 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" 
           />
           <input 
@@ -358,11 +404,16 @@ export default function Home() {
       </div>
 
       <div className="grid grid-cols-5 gap-4 p-6">
-        <Card title="💰 Total" value={formatoCOP(totalGeneral)} />
-        <Card title="🔄 Devolución buena" value={formatoCOP(totalDevolucionBuena)} color="text-green-600"/>
+        {/* Valor total de ventas de planilla en el rango */}
+        <Card title="💸 Planillas" value={formatoCOP(totalVentasPlanilla)} />
+        {/* Total de devoluciones (buena + averías) */}
+        <Card title="💰 Total devoluciones" value={formatoCOP(totalDevoluciones)} />
+        {/* Dev Buena */}
+        <Card title="🔄 Dev Buena" value={formatoCOP(totalDevolucionBuena)} color="text-green-600"/>
+        {/* Averías */}
         <Card title="⚠️ Averías" value={formatoCOP(totalAverias)} color="text-red-600"/>
+        {/* Recepciones */}
         <Card title="📦 Recepciones" value={dataFiltrada.length} />
-        <Card title="📉 Faltantes" value={formatoNumero(totalFaltantes)} color="text-orange-600"/>
       </div>
 
       <div className="grid grid-cols-2 gap-6 px-6">
@@ -402,6 +453,19 @@ export default function Home() {
           </ResponsiveContainer>
         </ChartCard>
 
+      </div>
+
+      {/* Resumen del período: devolución buena y porcentaje de devolución */}
+      <div className="px-6">
+        <div className="bg-gray-200 p-4 rounded-lg text-center my-4">
+          <span className="font-semibold text-gray-700"> Cierre del Dia :</span>
+          <span className="mx-3 text-green-700 font-bold">
+            Dev Buena: {formatoCOP(totalDevolucionBuena)}
+          </span>
+          <span className={`mx-3 font-bold ${porcentajeColor}`}>
+            (%) : {porcentajeDevolucionPlanilla.toFixed(2)}%
+          </span>
+        </div>
       </div>
 
       <div className="p-6 grid gap-3">
