@@ -24,45 +24,48 @@ export default function SalidasPage() {
   const cargar = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from("inventario_devoluciones")
-      .select("*")
-      .gte("fecha", fechaInicio)
-      .lte("fecha", fechaFin);
+    try {
+      const { data: result, error } = await supabase
+        .from("inventario_devoluciones")
+        .select("*")
+        .gte("fecha", fechaInicio)
+        .lte("fecha", fechaFin);
 
-    if (error) {
-      console.log(error);
-      setLoading(false);
-      return;
-    }
-
-    // 🔥 CONSOLIDADO POR SKU
-    const mapa: any = {};
-
-    (data || []).forEach((d: any) => {
-
-      const sku = d.sku;
-      const nombre = d.producto;
-      const precio = Number(d.precio || 0);
-      const cantidad = Number(d.cantidad_total || 0);
-
-      if (!mapa[sku]) {
-        mapa[sku] = {
-          sku,
-          nombre,
-          cantidad: 0,
-          precio: precio,
-          total: 0,
-        };
+      if (error) {
+        console.error("Error cargando datos:", error);
+        setLoading(false);
+        return;
       }
 
-      mapa[sku].cantidad += cantidad;
+      const mapa: any = {};
 
-      // 🔥 SIEMPRE calcula (evita ceros raros)
-      mapa[sku].total += cantidad * precio;
-    });
+      (result || []).forEach((d: any) => {
 
-    setData(Object.values(mapa));
+        const sku = d.sku?.trim();
+        const nombre = d.producto;
+        const precio = Number(d.precio || 0);
+        const cantidad = Number(d.cantidad_total || 0);
+
+        if (!mapa[sku]) {
+          mapa[sku] = {
+            sku,
+            nombre,
+            cantidad: 0,
+            precio,
+            total: 0,
+          };
+        }
+
+        mapa[sku].cantidad += cantidad;
+        mapa[sku].total += cantidad * precio;
+      });
+
+      setData(Object.values(mapa));
+
+    } catch (err) {
+      console.error("Error general:", err);
+    }
+
     setLoading(false);
   };
 
