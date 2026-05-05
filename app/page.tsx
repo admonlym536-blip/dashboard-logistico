@@ -79,10 +79,12 @@ export default function Home() {
   }, [fechaInicio, fechaFin])
 
   const cargar = async () => {
+    // Solicitar hasta 10.000 filas para evitar el límite por defecto de 1.000 filas en Supabase
     const { data } = await supabase
       .from('recepciones')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('id', { ascending: false })
+      .limit(10000)
 
     setData(data || [])
   }
@@ -226,110 +228,148 @@ export default function Home() {
   ]
 
   const exportarExcel = async () => {
+    /**
+     * Exporta la información filtrada por fecha y otros filtros a un archivo Excel.
+     *
+     * Para evitar el límite por defecto de Supabase (que devuelve sólo 1000 filas),
+     * se aplican los mismos filtros utilizados en la interfaz (rango de fechas,
+     * planilla y usuario) antes de solicitar los datos. De esta forma sólo
+     * solicitamos al servidor las filas relevantes y reducimos la cantidad de
+     * registros a descargar. Además se eliminan las hojas de faltantes vacías
+     * que anteriormente aparecían en el Excel cuando no había datos.
+     */
 
-    const { data: detalle } = await supabase
-      .from('recepcion_detalle')
-      .select('*')
+    try {
+      // Filtrar las recepciones en memoria según los criterios actuales
+      const recepcionesFiltradas = data.filter(r => {
+        const fechaStr = r.created_at?.substring(0, 10)
+        return (
+          (!fechaInicio || (fechaStr && fechaStr >= fechaInicio)) &&
+          (!fechaFin || (fechaStr && fechaStr <= fechaFin)) &&
+          (!planillaFiltro || r.planilla?.toString().includes(planillaFiltro)) &&
+          (!usuarioFiltro || r.usuario === usuarioFiltro)
+        )
+      })
 
-    const { data: faltantesData } = await supabase
-      // Consultamos la misma vista de faltantes con nombres
-      .from('faltantes_con_nombres')
-      .select('*')
+      // Obtener los IDs de las recepciones filtradas
+      const recepcionIds = recepcionesFiltradas.map(r => r.id)
 
-    if (!detalle) return
-
-    const detalleCompleto = detalle.map(d => {
-      const r = data.find(x => x.id === d.recepcion_id)
-
-      const producto = d.nombre || 'SIN NOMBRE'
-      const cantidad = d.cantidad || 0
-      const precio = d.precio || 0
-      const valorTotal = cantidad * precio
-
-      return {
-        Planilla: r?.planilla,
-        Placa: r?.placa,
-        Usuario: r?.usuario,
-        Producto: producto,
-        Cantidad: cantidad,
-        Precio: precio,
-        Valor_Total: valorTotal,
-        Tipo: d.tipo,
-        Fecha: r?.created_at
+      // Obtener los detalles relacionados únicamente con las recepciones filtradas
+      let detalleData: any[] = []
+      if (recepcionIds.length > 0) {
+        // Dividimos en grupos de 1000 IDs para evitar superar el límite de parámetros
+        const pageSize = 1000
+        const chunks = []
+        for (let i = 0; i < recepcionIds.length; i += pageSize) {
+          chunks.push(recepcionIds.slice(i, i + pageSize))
+        }
+        for (const chunk of chunks) {
+          const { data: detalleChunk } = await supabase
+            .from('recepcion_detalle')
+            .select('*')
+            .in('recepcion_id', chunk as any)
+            .limit(10000)
+          detalleData = detalleData.concat(detalleChunk || [])
+        }
       }
-    })
 
-
-    // Detalle de faltantes con nombre del producto para el informe
-    const faltantesDetalle = (faltantesData || []).map(f => ({
-      Producto: f.nombre,
-      Vehiculo: f.vehiculo,
-      Cantidad_Faltante: f.cantidad_faltante,
-      Fecha: f.fecha
-    }))
-
-    // Consolidado de faltantes por producto (suma de cantidades)
-    const faltantesConsolidado = Object.values(
-      (faltantesData || []).reduce((acc: any, f: any) => {
-        const key = f.nombre || f.codigo_producto
-        if (!acc[key]) {
-          acc[key] = {
-            Producto: key,
-            Cantidad_Total: 0
-          }
+      // Construir los registros completos de detalle incluyendo información de la recepción
+      const detalleCompleto = detalleData.map(d => {
+        const r = recepcionesFiltradas.find(x => x.id === d.recepcion_id)
+        const producto = d.nombre || 'SIN NOMBRE'
+        const cantidad = d.cantidad || 0
+        const precio = d.precio || 0
+        const valorTotal = cantidad * precio
+        return {
+          Planilla: r?.planilla,
+          Placa: r?.placa,
+          Usuario: r?.usuario,
+          Producto: producto,
+          Cantidad: cantidad,
+          Precio: precio,
+          Valor_Total: valorTotal,
+          Tipo: d.tipo,
+          Fecha: r?.created_at
         }
-        acc[key].Cantidad_Total += f.cantidad_faltante || 0
-        return acc
-      }, {})
-    )
+      })
 
-    const consolidado = Object.values(
-      detalleCompleto.reduce((acc: any, d: any) => {
-
-        if (!acc[d.Producto]) {
-          acc[d.Producto] = {
-            Producto: d.Producto,
-            Cantidad_Total: 0,
-            Valor_Total: 0,
-            Valor_Devolucion_Buena: 0,
-            Valor_Averias: 0
+      // Calcular consolidado de recepciones (por producto)
+      const consolidado = Object.values(
+        detalleCompleto.reduce((acc: any, d: any) => {
+          if (!acc[d.Producto]) {
+            acc[d.Producto] = {
+              Producto: d.Producto,
+              Cantidad_Total: 0,
+              Valor_Total: 0,
+              Valor_Devolucion_Buena: 0,
+              Valor_Averias: 0
+            }
           }
-        }
+          acc[d.Producto].Cantidad_Total += d.Cantidad
+          acc[d.Producto].Valor_Total += d.Valor_Total
+          if (d.Tipo === 'devolucion buena') acc[d.Producto].Valor_Devolucion_Buena += d.Valor_Total
+          if (d.Tipo === 'averia') acc[d.Producto].Valor_Averias += d.Valor_Total
+          return acc
+        }, {})
+      )
 
-        acc[d.Producto].Cantidad_Total += d.Cantidad
-        acc[d.Producto].Valor_Total += d.Valor_Total
+      // Obtener faltantes en el mismo rango de fechas para los vehículos filtrados (si los hay)
+      let faltantesData: any[] = []
+      const vehiculosFiltrados = recepcionesFiltradas
+        .map(r => r.placa)
+        .filter(v => v && v.length > 0)
+      if (vehiculosFiltrados.length > 0) {
+        // también se consulta por rango de fechas para evitar traer todos los registros
+        const { data: faltantesRaw } = await supabase
+          .from('faltantes_con_nombres')
+          .select('*')
+          .in('vehiculo', vehiculosFiltrados as any)
+          .gte('fecha', fechaInicio)
+          .lte('fecha', fechaFin)
+          .limit(10000)
+        faltantesData = faltantesRaw || []
+      }
 
-        if (d.Tipo === 'devolucion buena')
-          acc[d.Producto].Valor_Devolucion_Buena += d.Valor_Total
+      // Detalle de faltantes con nombre del producto para el informe
+      const faltantesDetalle = faltantesData.map(f => ({
+        Producto: f.nombre,
+        Vehiculo: f.vehiculo,
+        Cantidad_Faltante: f.cantidad_faltante,
+        Fecha: f.fecha
+      }))
 
-        if (d.Tipo === 'averia')
-          acc[d.Producto].Valor_Averias += d.Valor_Total
+      // Consolidado de faltantes por producto (suma de cantidades)
+      const faltantesConsolidado = Object.values(
+        faltantesData.reduce((acc: any, f: any) => {
+          const key = f.nombre || f.codigo_producto
+          if (!acc[key]) {
+            acc[key] = {
+              Producto: key,
+              Cantidad_Total: 0
+            }
+          }
+          acc[key].Cantidad_Total += f.cantidad_faltante || 0
+          return acc
+        }, {})
+      )
 
-        return acc
+      // Crear el libro de Excel y agregar las hojas
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(consolidado), 'Consolidado')
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalleCompleto), 'Detalle')
+      // Sólo agregar hojas de faltantes si hay datos; si no, se omiten para evitar pestañas vacías
+      if (faltantesDetalle.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(faltantesDetalle), 'Faltantes_Detalle')
+      }
+      if (faltantesConsolidado.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(faltantesConsolidado), 'Faltantes_Consolidado')
+      }
 
-      }, {})
-    )
-
-    const wb = XLSX.utils.book_new()
-
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(consolidado), 'Consolidado')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalleCompleto), 'Detalle')
-
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(faltantesDetalle),
-      'Faltantes_Detalle'
-    )
-
-    // Añadimos una hoja con el consolidado de faltantes para la nota de crédito
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(faltantesConsolidado),
-      'Faltantes_Consolidado'
-    )
-
-    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
-    saveAs(new Blob([buffer]), 'reporte_logistico.xlsx')
+      const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+      saveAs(new Blob([buffer]), 'reporte_logistico.xlsx')
+    } catch (err) {
+      console.error('Error al exportar Excel', err)
+    }
   }
 
   return (
