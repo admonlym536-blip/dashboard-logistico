@@ -1,0 +1,10 @@
+- [x] Ajustar gráfico "Ingresos por día" para muchas fechas (orden, etiquetas, legibilidad)
+- [x] Ajustar gráfico circular para mostrar porcentajes
+- [x] Mantener la lógica de negocio intacta
+- [x] Revisar consistencia visual final en `app/page.tsx`
+- [x] Hacer logo principal más grande y estético en `app/page.tsx`
+- [x] Configurar Supabase sin persistencia de sesión en `lib/supabase.ts`
+- [x] Modernizar UI de `app/salidas/page.tsx` manteniendo lógica actual
+- [x] Tipar datos y consolidado por SKU sin `any`
+- [x] Mejorar exportación Excel con hojas: Resumen_SKU, Detalle_Por_Fecha, Filtros
+- [ ] Validación rápida del filtro por fechas y exportación

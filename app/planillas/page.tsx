@@ -1,12 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { ChangeEvent, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 
+type PlanillaRow = {
+  vehiculo?: string;
+  ruta?: string;
+  numero_planilla?: string | number;
+  valor_venta?: string | number;
+  fecha?: string | number;
+  [key: string]: string | number | null | undefined;
+};
+
 export default function PlanillasPage() {
 
-  const [preview, setPreview] = useState<any[]>([]);
+  const [preview, setPreview] = useState<PlanillaRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [archivoCargado, setArchivoCargado] = useState(false);
@@ -21,32 +30,35 @@ export default function PlanillasPage() {
     }).format(valor || 0);
 
   // 🔥 CONVERTIR FECHA
-  const convertirFecha = (valor: any) => {
-    if (!valor) return null;
+  const convertirFecha = (valor: unknown): string => {
+    if (!valor) return "";
 
-    if (!isNaN(valor)) {
+    if (typeof valor === "number" && !isNaN(valor)) {
       const fecha = new Date((valor - 25569) * 86400 * 1000);
       return fecha.toISOString().split("T")[0];
     }
 
-    return valor;
+    return String(valor);
   };
 
   // 🔥 LEER ARCHIVO
-  const manejarArchivo = (e: any) => {
-    const file = e.target.files[0];
+  const manejarArchivo = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     setNombreArchivo(file.name);
 
     const reader = new FileReader();
 
-    reader.onload = (evt: any) => {
-      const data = new Uint8Array(evt.target.result);
+    reader.onload = (evt: globalThis.ProgressEvent<FileReader>) => {
+      const result = evt.target?.result;
+      if (!result) return;
+
+      const data = new Uint8Array(result as ArrayBuffer);
       const workbook = XLSX.read(data, { type: "array" });
 
       const hoja = workbook.Sheets[workbook.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(hoja);
+      const json = XLSX.utils.sheet_to_json<PlanillaRow>(hoja);
 
       setPreview(json);
       setArchivoCargado(true);
@@ -74,7 +86,7 @@ export default function PlanillasPage() {
 
     try {
 
-      const registros = preview.map((r: any) => ({
+      const registros = preview.map((r) => ({
         vehiculo: r.vehiculo,
         ruta: r.ruta,
         numero_planilla: r.numero_planilla,
@@ -106,7 +118,7 @@ export default function PlanillasPage() {
   const totalPlanillas = preview.length;
 
   const totalValor = preview.reduce(
-    (acc, r: any) => acc + Number(r.valor_venta || 0),
+    (acc, r) => acc + Number(r.valor_venta || 0),
     0
   );
 
@@ -222,11 +234,11 @@ export default function PlanillasPage() {
                 <tbody>
                   {preview.slice(0, 20).map((row, i) => (
                     <tr key={i} className="border-t hover:bg-gray-50">
-                      {Object.entries(row).map(([key, val]: any, j) => (
+                      {Object.entries(row).map(([key, val], j) => (
                         <td key={j} className="p-3">
                           {key === "fecha"
                             ? convertirFecha(val)
-                            : val}
+                            : String(val ?? "")}
                         </td>
                       ))}
                     </tr>

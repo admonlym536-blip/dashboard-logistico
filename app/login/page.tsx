@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { KeyboardEvent, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
@@ -46,7 +46,7 @@ export default function LoginPage() {
     router.replace('/')
   }
 
-  const handleKeyDown = (e: any) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') login()
   }
 
@@ -100,6 +100,7 @@ export default function LoginPage() {
           />
 
           <button
+            type="button"
             onClick={() => setVerPassword(!verPassword)}
             className="absolute right-3 top-9 text-gray-500"
           >
@@ -134,6 +135,7 @@ export default function LoginPage() {
           </button>
 
           <button
+            type="button"
             onClick={login}
             className="px-4 bg-[#0C3B75] text-white rounded-lg"
           >
